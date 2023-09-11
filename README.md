@@ -2,7 +2,7 @@
 
 ## Getting Started
 1. Create a console project.
-1. Download and add the nuget package to your project.
+1. Download and add the [nuget package](https://www.nuget.org/packages/Xapier14.KnnSharp/1.0.0) to your project.
 1. Download the [sample dataset](https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data) and place it on the root of your project and in the same directory as your build artifact.
 1. Replace the contents of `Program.cs` with:
    ```csharp
