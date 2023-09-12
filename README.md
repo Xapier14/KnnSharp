@@ -1,5 +1,5 @@
 ﻿# KNN Sharp
-
+Try it out on [.NET Fiddle](https://dotnetfiddle.net/JBjIBv).
 ## Getting Started
 1. Create a console project.
 1. Download and add the [nuget package](https://www.nuget.org/packages/Xapier14.KnnSharp/1.0.0) to your project.
