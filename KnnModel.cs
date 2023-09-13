@@ -5,32 +5,30 @@ namespace Xapier14.KnnSharp
 {
     public enum DistanceFormula
     {
-        Euclidean
+        Euclidean,
+        Manhattan
     }
     public class KnnClassifierModel<T> where T : INumber<T>
     {
         private DataSet<T>? _dataSet;
         private int _dataSetClassIndex;
 
-        private readonly Dictionary<DistanceFormula, Func<DataPoint<T>, DataPoint<T>, int, int, double>> _distanceFormulas = new();
+        private readonly Dictionary<DistanceFormula, Func<DataPoint<T>, DataPoint<T>, double>> _distanceFormulas = new();
 
         public KnnClassifierModel()
         {
             _distanceFormulas.Add(DistanceFormula.Euclidean, CalculateEuclideanDistance);
+            _distanceFormulas.Add(DistanceFormula.Manhattan, CalculateManhattanDistance);
         }
 
         public DistanceFormula DistanceFormula { get; set; } = DistanceFormula.Euclidean;
         public uint KValue { get; set; } = 3;
 
-        public double TrainAndTest(DataSet<T> dataSet, int classColumnIndex = -1, int k = 3, double testPercentage = 0.4, int seed = 0)
+        public double TrainAndTest(DataSet<T> dataSet, int classColumnIndex = -1, double testPercentage = 0.4, int seed = 0)
         {
             var n = dataSet.Count();
             if (dataSet.FieldCount < 3)
                 throw new ArgumentException("DataSet must at least have three fields or more.", nameof(dataSet));
-
-            // auto is last field
-            if (classColumnIndex == -1)
-                classColumnIndex = dataSet.FieldCount - 1;
 
             var testCount = (int)(dataSet.Count() * testPercentage);
             var trainingIndices = new LinkedList<int>();
@@ -58,36 +56,55 @@ namespace Xapier14.KnnSharp
             return TrainAndTest(trainingDataSet, testingDataSet, classColumnIndex);
         }
 
-        public double TrainAndTest(DataSet<T> trainingDataSet, DataSet<T> testingDataSet, int classColumnIndex)
+        public double TrainAndTest(DataSet<T> trainingDataSet, DataSet<T> testingDataSet, int classColumnIndex = -1)
             => TrainAndTest(trainingDataSet, testingDataSet, classColumnIndex, classColumnIndex);
 
         public double TrainAndTest(DataSet<T> trainingDataSet, DataSet<T> testingDataSet, int trainingDataSetClassColumnIndex, int testingDataSetClassColumnIndex)
         {
-            if (trainingDataSet.FieldCount < 2)
-                throw new ArgumentException("DataSet must at least have two fields or more.", nameof(trainingDataSet));
+            Train(trainingDataSet, trainingDataSetClassColumnIndex);
+            return Test(testingDataSet, testingDataSetClassColumnIndex);
+        }
 
-            if (trainingDataSet.FieldCount != testingDataSet.FieldCount)
+        public void Train(DataSet<T> dataSet, int classColumnIndex = -1)
+        {
+            if (dataSet.FieldCount < 2)
+                throw new ArgumentException("DataSet must at least have two fields or more.", nameof(dataSet));
+
+            if (classColumnIndex == -1)
+                classColumnIndex = dataSet.FieldCount - 1;
+
+            _dataSet = new DataSet<T>(dataSet.FieldCount);
+            _dataSetClassIndex = classColumnIndex;
+
+            foreach (var dataPoint in dataSet)
+            {
+                _dataSet.AddPoint(dataPoint);
+            }
+        }
+
+        public double Test(DataSet<T> dataSet, int classColumnIndex = -1)
+        {
+            if (_dataSet is null)
+                throw new InvalidOperationException("Data set is not loaded. Use Train() to load.");
+
+            if (_dataSet.FieldCount != dataSet.FieldCount)
                 throw new ArgumentException("Field count mismatch between training data and testing data.");
 
-            _dataSet = new DataSet<T>(trainingDataSet.FieldCount);
-            _dataSetClassIndex = trainingDataSetClassColumnIndex;
-
-            foreach (var trainingDataPoint in trainingDataSet)
-            {
-                _dataSet.AddPoint(trainingDataPoint);
-            }
+            if (classColumnIndex == -1)
+                classColumnIndex = dataSet.FieldCount - 1;
 
             var correct = 0.0;
-            foreach (var testingDataPoint in testingDataSet)
+            foreach (var testingDataPoint in dataSet)
             {
                 var prediction = Classify(testingDataPoint);
-                var actual = testingDataPoint[testingDataSetClassColumnIndex].GetString();
+                var actual = testingDataPoint[classColumnIndex].GetString();
                 if (prediction == actual)
                     correct++;
             }
 
-            return correct / testingDataSet.Count();
+            return correct / dataSet.Count();
         }
+
 
         public string Classify(DataPoint<T> dataPoint)
         {
@@ -118,9 +135,14 @@ namespace Xapier14.KnnSharp
 
         private double CalculateDistance(DataPoint<T> dataPoint1, DataPoint<T> dataPoint2, int classIndex)
         {
+            if (dataPoint1.Length == _dataSet!.FieldCount)
+                dataPoint1 = dataPoint1.ExtractWithoutIndex(classIndex);
+            if (dataPoint2.Length == _dataSet!.FieldCount)
+                dataPoint2 = dataPoint2.ExtractWithoutIndex(classIndex);
+
             if (_distanceFormulas.TryGetValue(DistanceFormula, out var calculateFunc))
             {
-                return calculateFunc(dataPoint1, dataPoint2, classIndex, _dataSet!.FieldCount);
+                return calculateFunc(dataPoint1, dataPoint2);
             }
 
             throw new InvalidOperationException("DistanceFormula is invalid.");
@@ -150,25 +172,38 @@ namespace Xapier14.KnnSharp
             return maxLabel;
         }
 
-        private static double CalculateEuclideanDistance(DataPoint<T> dataPoint1, DataPoint<T> dataPoint2, int classIndex, int fieldCount)
+        private static double CalculateEuclideanDistance(DataPoint<T> dataPoint1, DataPoint<T> dataPoint2)
         {
-            if (dataPoint1.Length == fieldCount)
-                dataPoint1 = dataPoint1.ExtractWithoutIndex(classIndex);
-            if (dataPoint2.Length == fieldCount)
-                dataPoint2 = dataPoint2.ExtractWithoutIndex(classIndex);
             var n = dataPoint1.Length;
 
             var distanceSquaredSum = 0.0;
 
             for (var i = 0; i < n; ++i)
             {
-                if (dataPoint1[i].GetNumber() - dataPoint2[i].GetNumber() is not double plusMin)
+                if (dataPoint1[i].GetNumber() - dataPoint2[i].GetNumber() is not T difference)
                     throw new ArgumentException("Invalid data points.");
 
-                distanceSquaredSum += plusMin * plusMin;
+                distanceSquaredSum += (double)Convert.ChangeType(difference * difference, TypeCode.Double);
             }
 
             return distanceSquaredSum;
+        }
+
+        private static double CalculateManhattanDistance(DataPoint<T> dataPoint1, DataPoint<T> dataPoint2)
+        {
+            var n = dataPoint1.Length;
+
+            double totalSum = 0;
+
+            for (var i = 0; i < n; ++i)
+            {
+                if (dataPoint1[i].GetNumber() - dataPoint2[i].GetNumber() is not T difference)
+                    throw new ArgumentException("Invalid data points.");
+
+                totalSum += Math.Abs((double)Convert.ChangeType(difference, TypeCode.Double));
+            }
+
+            return totalSum;
         }
     }
 }
